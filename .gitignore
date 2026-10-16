@@ -1,0 +1,14 @@
+# === Tooling lokal / hasil build yang tidak perlu repo ===
+tmp/
+backend_old_*/
+
+# === Editor & OS ===
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# === Catatan: backend/vendor, backend/.env, mobile/.dart_tool, build/,
+# android/local.properties sudah di-ignores oleh .gitignore masing-masing
+# subfolder (bawaan Laravel & Flutter). ===
