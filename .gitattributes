@@ -1,0 +1,10 @@
+# Perlakukan lockfile & file generated sebagai non-code agar tidak
+# mendominasi statistik bahasa di GitHub (Linguist).
+backend/composer.lock   linguist-generated
+mobile/pubspec.lock     linguist-generated
+backend/package.json    linguist-generated
+mobile/web/**           linguist-generated
+
+# Dokumentasi desain/PRD tidak dihitung sebagai kode.
+PRD.md                  linguist-documentation
+GEMINI.md               linguist-documentation
