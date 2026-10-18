@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/api/api_client.dart';
@@ -54,7 +55,7 @@ class OrderDetailScreen extends ConsumerWidget {
               _ItemsCard(order: order),
               if (isStaff) _CustomerCard(order: order),
               _PhotosCard(order: order, canUpload: isStaff),
-              _TimelineCard(logs: order.statusLogs),
+              _TimelineCard(order: order),
               if (order.payments.isNotEmpty) _PaymentsCard(order: order),
               if (isStaff) _ActionsCard(order: order, isOwner: user.isOwner),
             ],
@@ -357,101 +358,362 @@ class _PhotosCardState extends ConsumerState<_PhotosCard> {
   }
 }
 
-// ---------------------------------------------------------------- Timeline
+// ---------------------------------------------------------------- Timeline helpers
+
+/// Standard main-flow lifecycle steps (in order).
+const _kLifecycleSteps = <String>[
+  'Diterima',
+  'Ditimbang',
+  'Dicuci',
+  'Disetrika',
+  'Siap',
+  'Diambil',
+  'Lunas',
+  'Selesai',
+];
+
+/// Compact date+time label for the timeline, e.g. "Sab, 10 Okt · 09.12"
+String _timelineDate(String? dateStr) {
+  if (dateStr == null) return '-';
+  try {
+    final dt = DateTime.parse(dateStr).toUtc().add(const Duration(hours: 8));
+    return DateFormat("EEE, d MMM '·' HH.mm", 'id_ID').format(dt);
+  } catch (_) {
+    return '-';
+  }
+}
+
+// ---------------------------------------------------------------- Timeline card
 class _TimelineCard extends StatelessWidget {
-  final List<StatusLogModel> logs;
-  const _TimelineCard({required this.logs});
+  final OrderModel order;
+  const _TimelineCard({required this.order});
 
   @override
   Widget build(BuildContext context) {
-    final sorted = [...logs]
-      ..sort((a, b) => (b.createdAt ?? '').compareTo(a.createdAt ?? ''));
+    final currentStatus = order.status;
+    final isSpecialTerminal =
+        currentStatus == 'Dibatalkan' || currentStatus == 'Tidak Diambil';
+
+    // Build map: toStatus → first StatusLogModel that reached it
+    final logMap = <String, StatusLogModel>{};
+    for (final log in order.statusLogs) {
+      logMap.putIfAbsent(log.toStatus, () => log);
+    }
+
+    // Determine which steps to render
+    final List<String> steps;
+    if (isSpecialTerminal) {
+      // Show only lifecycle steps that were actually reached, plus the terminal
+      var lastReachedIdx = -1;
+      for (var i = 0; i < _kLifecycleSteps.length; i++) {
+        if (logMap.containsKey(_kLifecycleSteps[i])) lastReachedIdx = i;
+      }
+      steps = [
+        if (lastReachedIdx >= 0)
+          ..._kLifecycleSteps.sublist(0, lastReachedIdx + 1),
+        currentStatus,
+      ];
+    } else {
+      steps = _kLifecycleSteps;
+    }
+
+    final currentIdx = steps.indexOf(currentStatus);
+
+    // Find initial-condition photo (linked to "Ditimbang" step)
+    OrderPhotoModel? initialPhoto;
+    for (final p in order.photos) {
+      if (p.photoType == 'initial') {
+        initialPhoto = p;
+        break;
+      }
+    }
+
     return SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Linimasa status',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-          const SizedBox(height: 12),
-          if (sorted.isEmpty)
-            const Text('Belum ada riwayat status.',
-                style: TextStyle(fontSize: 13, color: AppColors.textMuted))
-          else
-            ...sorted.asMap().entries.map((e) {
-              final log = e.value;
-              final isLast = e.key == sorted.length - 1;
-              return IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Column(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          margin: const EdgeInsets.only(top: 3),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.getStatusColor(log.toStatus),
-                          ),
-                        ),
-                        if (!isLast)
-                          const Expanded(
-                            child: WidthBar(),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              log.fromStatus == null
-                                  ? log.toStatus
-                                  : '${log.fromStatus} → ${log.toStatus}',
-                              style: const TextStyle(
-                                  fontSize: 13, fontWeight: FontWeight.w600),
-                            ),
-                            Text(
-                              '${Formatters.dateTimeWita(log.createdAt)}${log.changedByName != null ? ' · ${log.changedByName}' : ''}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: AppColors.textMuted),
-                            ),
-                            if (log.reason != null &&
-                                log.reason!.isNotEmpty)
-                              Text(log.reason!,
-                                  style: const TextStyle(
-                                      fontSize: 11,
-                                      fontStyle: FontStyle.italic,
-                                      color: AppColors.textSecondary)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
+          const Text(
+            'Linimasa status',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+          ...steps.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final stepName = entry.value;
+            final isCompleted = idx < currentIdx;
+            final isActive = idx == currentIdx;
+            final isLast = idx == steps.length - 1;
+            final log = logMap[stepName];
+            final showPhotoLink =
+                stepName == 'Ditimbang' && initialPhoto != null;
+
+            return _StepRow(
+              stepName: stepName,
+              isCompleted: isCompleted,
+              isActive: isActive,
+              isLast: isLast,
+              log: log,
+              showPhotoLink: showPhotoLink,
+              photoUrl: showPhotoLink
+                  ? (_photoBaseUrl() + initialPhoto.photoPath)
+                  : null,
+              order: order,
+            );
+          }),
         ],
       ),
     );
   }
 }
 
-class WidthBar extends StatelessWidget {
-  const WidthBar({super.key});
+// ---------------------------------------------------------------- Individual step row
+class _StepRow extends StatelessWidget {
+  final String stepName;
+  final bool isCompleted;
+  final bool isActive;
+  final bool isLast;
+  final StatusLogModel? log;
+  final bool showPhotoLink;
+  final String? photoUrl;
+  final OrderModel order;
+
+  const _StepRow({
+    required this.stepName,
+    required this.isCompleted,
+    required this.isActive,
+    required this.isLast,
+    this.log,
+    required this.showPhotoLink,
+    this.photoUrl,
+    required this.order,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
-      width: 2,
-      child: ColoredBox(color: AppColors.border),
+    final lineColor = isCompleted ? AppColors.primary : AppColors.border;
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ---- Left column: dot + connecting line ----
+          SizedBox(
+            width: 28,
+            child: Column(
+              children: [
+                _TimelineDot(isCompleted: isCompleted, isActive: isActive),
+                if (!isLast)
+                  Expanded(
+                    child: Center(
+                      child: Container(width: 2, color: lineColor),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // ---- Right column: text content ----
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Step name + optional "Sekarang" badge
+                  Row(
+                    children: [
+                      Text(
+                        stepName,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: isActive
+                              ? FontWeight.w700
+                              : isCompleted
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                          color: isCompleted || isActive
+                              ? AppColors.textPrimary
+                              : AppColors.textMuted,
+                        ),
+                      ),
+                      if (isActive) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 9, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.accentLight,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text(
+                            'Sekarang',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.accent,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  // Subtitle
+                  if (isCompleted || isActive)
+                    _completedSubtitle(context)
+                  else
+                    _pendingSubtitle(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _completedSubtitle(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _timelineDate(log?.createdAt),
+          style: const TextStyle(
+              fontSize: 12, color: AppColors.textSecondary),
+        ),
+        if (showPhotoLink && photoUrl != null)
+          GestureDetector(
+            onTap: () => _openPhotoDialog(context, photoUrl!),
+            child: const Text(
+              'Foto kondisi awal',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+                decoration: TextDecoration.underline,
+                decorationColor: AppColors.primary,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _pendingSubtitle() {
+    String label;
+    if (stepName == 'Siap' && order.completedAt != null) {
+      label =
+          'Perkiraan ${_timelineDate(order.completedAt)}. Anda akan dapat notifikasi.';
+    } else if (order.dueAt != null) {
+      label = 'Perkiraan ${_timelineDate(order.dueAt)}.';
+    } else {
+      label = 'Menunggu proses sebelumnya selesai.';
+    }
+    return Text(
+      label,
+      style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+    );
+  }
+
+  void _openPhotoDialog(BuildContext context, String url) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+        clipBehavior: Clip.antiAlias,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Stack(
+          children: [
+            Image.network(
+              url,
+              width: double.infinity,
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => const Padding(
+                padding: EdgeInsets.all(32),
+                child: Icon(Icons.broken_image_rounded,
+                    size: 56, color: AppColors.textMuted),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                color: Colors.black38,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(ctx),
+                  tooltip: 'Tutup',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
+
+// ---------------------------------------------------------------- Dot indicator
+class _TimelineDot extends StatelessWidget {
+  final bool isCompleted;
+  final bool isActive;
+  const _TimelineDot({required this.isCompleted, required this.isActive});
+
+  @override
+  Widget build(BuildContext context) {
+    if (isCompleted) {
+      // Solid teal circle with white checkmark
+      return Container(
+        width: 24,
+        height: 24,
+        margin: const EdgeInsets.only(top: 1),
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.primary,
+        ),
+        child: const Icon(Icons.check_rounded, color: Colors.white, size: 14),
+      );
+    }
+    if (isActive) {
+      // Amber circle with thick border and inner dot
+      return Container(
+        width: 24,
+        height: 24,
+        margin: const EdgeInsets.only(top: 1),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: AppColors.accent, width: 3),
+          color: Colors.white,
+        ),
+        child: Center(
+          child: Container(
+            width: 9,
+            height: 9,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.accent,
+            ),
+          ),
+        ),
+      );
+    }
+    // Pending: hollow gray circle
+    return Container(
+      width: 24,
+      height: 24,
+      margin: const EdgeInsets.only(top: 1),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: AppColors.border, width: 2),
+        color: Colors.white,
+      ),
+    );
+  }
+}
+
+
 
 // ---------------------------------------------------------------- Payments
 class _PaymentsCard extends StatelessWidget {
