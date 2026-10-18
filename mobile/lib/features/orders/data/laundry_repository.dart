@@ -34,6 +34,16 @@ class LaundryRepository {
     return PointsModel.fromJson(res);
   }
 
+  Future<void> redeemPoints({
+    required int customerId,
+    required int points,
+    String? description,
+  }) async {
+    final payload = <String, dynamic>{'points': points};
+    if (description != null) payload['description'] = description;
+    await _api.post('/customers/$customerId/redeem-points', data: payload);
+  }
+
   // ---- Orders ----
   Future<List<OrderModel>> fetchOrders({String? status, String? search}) async {
     final res = await _api.get('/orders', queryParameters: {

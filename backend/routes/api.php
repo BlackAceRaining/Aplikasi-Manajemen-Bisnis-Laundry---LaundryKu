@@ -34,6 +34,7 @@ Route::middleware(['auth.jwt'])->group(function () {
     // Customers list & points
     Route::get('/customers', [CustomerController::class, 'index'])->middleware(['role:pemilik,pegawai']);
     Route::get('/customers/{id}/points', [CustomerController::class, 'getPoints']);
+    Route::post('/customers/{id}/redeem-points', [CustomerController::class, 'redeemPoints']);
 
     // Orders
     Route::get('/orders', [OrderController::class, 'index']);
