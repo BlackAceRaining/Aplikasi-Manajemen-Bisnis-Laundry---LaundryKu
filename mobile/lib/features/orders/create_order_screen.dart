@@ -46,6 +46,25 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
   final Set<String> _selectedTags = {};
 
   @override
+  void initState() {
+    super.initState();
+    // Jika user adalah pelanggan, kunci otomatis customer ke akun user tersebut
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final user = ref.read(authProvider).user;
+      if (user != null && user.isCustomer && user.customerId != null) {
+        setState(() {
+          _customer = CustomerModel(
+            id: user.customerId!,
+            name: user.name,
+            phone: user.phone,
+            pointBalance: user.pointBalance,
+          );
+        });
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _discountCtrl.dispose();
     _notesCtrl.dispose();
@@ -178,6 +197,18 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
 
   Future<void> _save() async {
     if (_customer == null) {
+      final user = ref.read(authProvider).user;
+      if (user != null && user.isCustomer && user.customerId != null) {
+        _customer = CustomerModel(
+          id: user.customerId!,
+          name: user.name,
+          phone: user.phone,
+          pointBalance: user.pointBalance,
+        );
+      }
+    }
+
+    if (_customer == null) {
       showSnack(context, 'Pilih pelanggan terlebih dahulu.', isError: true);
       return;
     }
@@ -228,46 +259,51 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
   @override
   Widget build(BuildContext context) {
     final customer = _customer;
+    final currentUser = ref.watch(authProvider).user;
+    final isCustomerRole = currentUser?.isCustomer ?? false;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Order Baru')),
       body: ListView(
         padding: const EdgeInsets.only(top: 8, bottom: 24),
         children: [
-          // Customer selector (K1: header pelanggan + Ganti)
-          SectionCard(
-            onTap: _pickCustomer,
-            child: Row(
-              children: [
-                const Icon(Icons.person_search_rounded,
-                    color: AppColors.primary),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: customer == null
-                      ? const Text('Pilih pelanggan',
-                          style: TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w600))
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(customer.name,
-                                style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700)),
-                            Text(
-                                '${customer.phone} · ${customer.pointBalance} poin',
-                                style: const TextStyle(
-                                    fontSize: 12,
-                                    color: AppColors.textMuted)),
-                          ],
-                        ),
-                ),
-                Icon(customer == null
-                    ? Icons.chevron_right_rounded
-                    : Icons.refresh_rounded,
-                    color: AppColors.textMuted),
-              ],
+          // Customer selector hanya untuk Pegawai & Pemilik (K1: header pelanggan + Ganti)
+          // Untuk pelanggan disembunyikan agar tidak membingungkan
+          if (!isCustomerRole)
+            SectionCard(
+              onTap: _pickCustomer,
+              child: Row(
+                children: [
+                  const Icon(Icons.person_search_rounded,
+                      color: AppColors.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: customer == null
+                        ? const Text('Pilih pelanggan',
+                            style: TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600))
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(customer.name,
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700)),
+                              Text(
+                                  '${customer.phone} · ${customer.pointBalance} poin',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textMuted)),
+                            ],
+                          ),
+                  ),
+                  Icon(customer == null
+                      ? Icons.chevron_right_rounded
+                      : Icons.refresh_rounded,
+                      color: AppColors.textMuted),
+                ],
+              ),
             ),
-          ),
           const SectionHeader(title: 'Item layanan'),
           if (_items.isEmpty)
             const Padding(
